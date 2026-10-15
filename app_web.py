@@ -2,6 +2,8 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from PIL import Image
+import cv2
+# oppure se preferisci usare direttamente qrcode/pyzbar con la libreria di sistema già configurata
 from pyzbar.pyzbar import decode
 from operazioni import assegna_attrezzatura, restituisci_attrezzatura
 
