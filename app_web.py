@@ -4,7 +4,6 @@ import pandas as pd
 from PIL import Image
 from pyzbar.pyzbar import decode
 from operazioni import assegna_attrezzatura, restituisci_attrezzatura
-
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
 
 st.title("🛠️ Pigozzi Tech S.R.L. - Gestione Attrezzature")
@@ -48,6 +47,18 @@ def ottieni_storico_movimenti():
     righe = cursor.fetchall()
     conn.close()
     return righe
+
+# Funzione per marcare l'attrezzatura come danneggiata (fallback se non presente nel modulo esterno)
+def segnala_danneggiata_db(codice_eq):
+    try:
+        conn = sqlite3.connect('pigozzi_tech.db')
+        cursor = conn.cursor()
+        cursor.execute("UPDATE attrezzature SET stato = 'Danneggiata' WHERE codice_identificativo = ?", (codice_eq,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        return False
 
 # --- DASHBOARD METRICS ---
 tot, disp, ass, dann, smar = ottieni_statistiche()
@@ -104,11 +115,14 @@ with col_op:
         sel_dipendente = st.selectbox("Seleziona Dipendente", lista_dip)
         cantiere = st.text_input("Cantiere / Ubicazione di destinazione")
         
-        col_btn1, col_btn2 = st.columns(2)
+        # Tre pulsanti affiancati nel form
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
-            submitted_consegna = st.form_submit_button("Registra Consegna 🚀", use_container_width=True)
+            submitted_consegna = st.form_submit_button("Consegna 🚀", use_container_width=True)
         with col_btn2:
-            submitted_restituzione = st.form_submit_button("Registra Restituzione 📥", use_container_width=True)
+            submitted_restituzione = st.form_submit_button("Restituzione 📥", use_container_width=True)
+        with col_btn3:
+            submitted_danneggiata = st.form_submit_button("Danneggiata ⚠️", use_container_width=True)
 
         if submitted_consegna:
             if not cantiere:
@@ -131,6 +145,15 @@ with col_op:
                 st.rerun()
             else:
                 st.error("Errore durante la restituzione.")
+
+        if submitted_danneggiata:
+            codice_eq = sel_attrezzatura.split(" - ")[0]
+            successo = segnala_danneggiata_db(codice_eq)
+            if successo:
+                st.warning(f"Attrezzatura {codice_eq} segnalata come DANNEGGIATA.")
+                st.rerun()
+            else:
+                st.error("Errore durante la segnalazione del danno.")
 
 st.divider()
 
