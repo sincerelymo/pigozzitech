@@ -2,7 +2,6 @@ import sqlite3
 from datetime import datetime
 
 def inizializza_db_azzzerato():
-    """Crea o resetta completamente il database con tabelle per quantità e tracciamento."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
@@ -58,7 +57,6 @@ def inizializza_db_azzzerato():
 
 
 def inserisci_articolo_iniziale(codice, descrizione, quantita_totale=10):
-    """Aggiunge un articolo con una quantità iniziale di magazzino."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
@@ -78,7 +76,6 @@ def inserisci_articolo_iniziale(codice, descrizione, quantita_totale=10):
 
 
 def modifica_quantita_totale(codice_identificativo, nuovo_totale):
-    """Modifica la quantità totale di un articolo e adegua i disponibili di conseguenza."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
@@ -120,8 +117,35 @@ def modifica_quantita_totale(codice_identificativo, nuovo_totale):
     return True, f"Quantità totale aggiornata a {nuovo_totale} con successo!"
 
 
+def azzera_articolo_specifico(codice_identificativo):
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    res = cursor.fetchone()
+    if not res:
+        conn.close()
+        return False, "Articolo non trovato."
+    
+    id_attrezzatura = res[0]
+    cursor.execute('''
+        UPDATE giacenze 
+        SET totale = 0, disponibili = 0, assegnate = 0, danneggiate = 0, smarrite = 0
+        WHERE id_attrezzatura = ?
+    ''', (id_attrezzatura,))
+
+    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''
+        INSERT INTO movimenti (id_attrezzatura, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+        VALUES (?, 'Azzeramento Articolo', 0, 'Magazzino', ?)
+    ''', (id_attrezzatura, data_ora))
+
+    conn.commit()
+    conn.close()
+    return True, f"Articolo {codice_identificativo} azzerato con successo!"
+
+
 def azzera_storico_movimenti():
-    """Cancella tutti i record dalla tabella movimenti."""
     try:
         conn = sqlite3.connect('pigozzi_tech.db')
         cursor = conn.cursor()

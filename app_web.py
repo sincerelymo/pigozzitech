@@ -10,6 +10,7 @@ from operazioni import (
     restituisci_attrezzatura, 
     segnala_danneggiata_o_persa,
     modifica_quantita_totale,
+    azzera_articolo_specifico,
     azzera_storico_movimenti
 )
 
@@ -90,7 +91,7 @@ def ottieni_liste_db():
     conn.close()
     return attrezzature, dipendenti
 
-def ottieni_storico_per_articolo(codice_articolo=None):
+def ottieni_storico_avanzato(codice_articolo=None, filtro_soggetto=None):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
     query = '''
@@ -99,15 +100,23 @@ def ottieni_storico_per_articolo(codice_articolo=None):
         FROM movimenti m
         JOIN attrezzature a ON m.id_attrezzatura = a.id
         LEFT JOIN dipendenti d ON m.id_dipendente = d.id
+        WHERE 1=1
     '''
+    params = []
     if codice_articolo and codice_articolo != "Tutti":
-        query += " WHERE a.codice_identificativo = ?"
-        query += " ORDER BY m.id DESC"
-        cursor.execute(query, (codice_articolo,))
-    else:
-        query += " ORDER BY m.id DESC"
-        cursor.execute(query)
-    
+        query += " AND a.codice_identificativo = ?"
+        params.append(codice_articolo)
+        
+    if filtro_soggetto == "Magazzino / Sistema":
+        query += " AND m.id_dipendente IS NULL"
+    elif filtro_soggetto and filtro_soggetto != "Tutti":
+        # Estraiamo l'ID del dipendente dalla stringa es. "1 - Mario Rossi"
+        id_dip = int(filtro_soggetto.split(" - ")[0])
+        query += " AND d.id = ?"
+        params.append(id_dip)
+        
+    query += " ORDER BY m.id DESC"
+    cursor.execute(query, params)
     righe = cursor.fetchall()
     conn.close()
     return righe
@@ -206,7 +215,7 @@ st.divider()
 
 # --- DASHBOARD DINAMICA IN BASE AL FILTRO ARTICOLO ---
 st.subheader("📊 Stato Magazzino & Giacenze")
-scelta_filtro_articolo = st.selectbox("Filtra metriche e storico per articolo:", ["Tutti"] + lista_eq)
+scelta_filtro_articolo = st.selectbox("Filtra metriche per articolo:", ["Tutti"] + lista_eq)
 
 codice_filtro = None
 if scelta_filtro_articolo != "Tutti":
@@ -221,31 +230,48 @@ col3.metric("Assegnate", ass)
 col4.metric("Danneggiate", dann)
 col5.metric("Smarrite", smar)
 
-# --- OPZIONE PER MODIFICARE LA QUANTITÀ TOTALE DELL'ARTICOLO ---
-with st.expander("⚙️ Modifica Quantità Totale di un Articolo"):
-    with st.form("form_modifica_totale"):
-        articolo_da_modificare = st.selectbox("Seleziona Articolo da Aggiornare", lista_eq, key="mod_tot")
-        nuovo_valore_totale = st.number_input("Nuova Quantità Totale Reale", min_value=1, max_value=500, value=10, step=1)
-        btn_aggiorna_totale = st.form_submit_button("Aggiorna Totale Magazzino 🔄")
+# --- OPZIONI DI GESTIONE ARTICOLO ---
+with st.expander("⚙️ Gestione Avanzata Articolo (Modifica / Azzera)"):
+    tab_mod, tab_azz = st.tabs(["Modifica Totale", "Azzera Articolo"])
+    
+    with tab_mod:
+        with st.form("form_modifica_totale"):
+            articolo_da_modificare = st.selectbox("Articolo da Aggiornare", lista_eq, key="mod_tot")
+            nuovo_valore_totale = st.number_input("Nuova Quantità Totale Reale", min_value=1, max_value=500, value=10, step=1)
+            btn_aggiorna_totale = st.form_submit_button("Aggiorna Totale Magazzino 🔄")
 
-        if btn_aggiorna_totale:
-            codice_mod = articolo_da_modificare.split(" - ")[0]
-            ok, msg = modifica_quantita_totale(codice_mod, nuovo_valore_totale)
-            if ok:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+            if btn_aggiorna_totale:
+                codice_mod = articolo_da_modificare.split(" - ")[0]
+                ok, msg = modifica_quantita_totale(codice_mod, nuovo_valore_totale)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+                    
+    with tab_azz:
+        with st.form("form_azzera_articolo"):
+            articolo_da_azzerare = st.selectbox("Articolo da Azzerare completamente", lista_eq, key="azz_art")
+            st.warning("⚠️ Questa opzione porterà a 0 tutti i valori (Totale, Disponibili, Assegnate, ecc.) dell'articolo selezionato.")
+            btn_conferma_azzera = st.form_submit_button("Azzera Articolo Selezionato ❌")
+
+            if btn_conferma_azzera:
+                codice_azz = articolo_da_azzerare.split(" - ")[0]
+                ok, msg = azzera_articolo_specifico(codice_azz)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
 st.divider()
 
-# --- STORICO MOVIMENTI E PULSANTE DI AZZERAMENTO ---
+# --- STORICO MOVIMENTI E FILTRI AVANZATI (Articolo + Soggetto: Dipendente o Magazzino) ---
 col_storico_titolo, col_storico_btn = st.columns([3, 1])
 with col_storico_titolo:
-    st.subheader("📜 Storico Movimenti")
+    st.subheader("📜 Storico Movimenti e Filtri")
 
 with col_storico_btn:
-    # Aggiungiamo un piccolo form o pulsante con conferma per azzerare lo storico
     with st.popover("🗑️ Azzera Storico"):
         st.write("Sei sicuro di voler cancellare tutto lo storico dei movimenti registrati?")
         if st.button("Conferma Azzeramento", type="primary"):
@@ -256,10 +282,22 @@ with col_storico_btn:
             else:
                 st.error(msg)
 
-storico_dati = ottieni_storico_per_articolo(codice_filtro)
+col_f1, col_f2 = st.columns(2)
+with col_f1:
+    filtro_storico_articolo = st.selectbox("Filtra storico per Articolo:", ["Tutti"] + lista_eq, key="fil_art")
+with col_f2:
+    # Aggiungiamo l'opzione "Magazzino / Sistema" oltre ai dipendenti
+    opzioni_soggetto = ["Tutti", "Magazzino / Sistema"] + lista_dip
+    filtro_storico_soggetto = st.selectbox("Filtra storico per Soggetto (Dipendente o Magazzino):", opzioni_soggetto, key="fil_sogg")
+
+codice_storico_art = None
+if filtro_storico_articolo != "Tutti":
+    codice_storico_art = filtro_storico_articolo.split(" - ")[0]
+
+storico_dati = ottieni_storico_avanzato(codice_storico_art, filtro_storico_soggetto)
 
 if storico_dati:
-    df_storico = pd.DataFrame(storico_dati, columns=["ID", "Articolo", "Dipendente", "Operazione", "Quantità", "Cantiere/Stato", "Data/Ora"])
+    df_storico = pd.DataFrame(storico_dati, columns=["ID", "Articolo", "Soggetto", "Operazione", "Quantità", "Cantiere/Stato", "Data/Ora"])
     st.dataframe(df_storico, use_container_width=True)
 else:
     st.info("Nessun movimento trovato per i criteri selezionati.")
