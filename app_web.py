@@ -3,6 +3,8 @@ import sqlite3
 import pandas as pd
 from PIL import Image
 from pyzbar.pyzbar import decode
+import qrcode
+import io
 from operazioni import (
     inizializza_db_azzzerato, 
     inserisci_articolo_iniziale, 
@@ -11,7 +13,9 @@ from operazioni import (
     segnala_danneggiata_o_persa,
     modifica_quantita_totale,
     azzera_articolo_specifico,
-    azzera_storico_movimenti
+    azzera_storico_movimenti,
+    aggiungi_nuovo_articolo_anagrafica,
+    elimina_articolo_definitivo
 )
 
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
@@ -110,7 +114,6 @@ def ottieni_storico_avanzato(codice_articolo=None, filtro_soggetto=None):
     if filtro_soggetto == "Magazzino / Sistema":
         query += " AND m.id_dipendente IS NULL"
     elif filtro_soggetto and filtro_soggetto != "Tutti":
-        # Estraiamo l'ID del dipendente dalla stringa es. "1 - Mario Rossi"
         id_dip = int(filtro_soggetto.split(" - ")[0])
         query += " AND d.id = ?"
         params.append(id_dip)
@@ -230,10 +233,46 @@ col3.metric("Assegnate", ass)
 col4.metric("Danneggiate", dann)
 col5.metric("Smarrite", smar)
 
-# --- OPZIONI DI GESTIONE ARTICOLO ---
-with st.expander("⚙️ Gestione Avanzata Articolo (Modifica / Azzera)"):
-    tab_mod, tab_azz = st.tabs(["Modifica Totale", "Azzera Articolo"])
+# --- OPZIONI DI GESTIONE ANAGRAFICA, ARTICOLI E QR CODE ---
+with st.expander("⚙️ Gestione Anagrafica Articoli, Modifiche & QR Code"):
+    tab_nuovo, tab_elimina, tab_mod, tab_azz, tab_qr = st.tabs([
+        "➕ Nuovo Articolo", "🗑️ Elimina Articolo", "Modifica Totale", "Azzera Articolo", "Genera QR Code 🖨️"
+    ])
     
+    with tab_nuovo:
+        with st.form("form_nuovo_articolo"):
+            st.write("Aggiungi un nuovo articolo da zero nel magazzino:")
+            nuovo_codice = st.text_input("Codice Identificativo (es. EQ-021)")
+            nuova_desc = st.text_input("Descrizione Articolo (es. Martello Pneumatico)")
+            nuova_qta_iniziale = st.number_input("Quantità Iniziale", min_value=1, max_value=200, value=5)
+            btn_crea_articolo = st.form_submit_button("Crea Articolo & Genera 🚀")
+
+            if btn_crea_articolo:
+                if not nuovo_codice or not nuova_desc:
+                    st.error("Inserisci sia il codice identificativo che la descrizione.")
+                else:
+                    ok, msg = aggiungi_nuovo_articolo_anagrafica(nuovo_codice.upper().strip(), nuova_desc, nuova_qta_iniziale)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+    with tab_elimina:
+        with st.form("form_elimina_articolo"):
+            st.warning("⚠️ Attenzione: Rimuovere un articolo lo cancellerà completamente insieme al suo storico e alle sue giacenze.")
+            articolo_da_eliminare = st.selectbox("Seleziona Articolo da Rimuovere", lista_eq, key="del_art")
+            btn_conferma_elimina = st.form_submit_button("Elimina Definitivamente ❌")
+
+            if btn_conferma_elimina:
+                codice_del = articolo_da_eliminare.split(" - ")[0]
+                ok, msg = elimina_articolo_definitivo(codice_del)
+                if ok:
+                    st.error(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
     with tab_mod:
         with st.form("form_modifica_totale"):
             articolo_da_modificare = st.selectbox("Articolo da Aggiornare", lista_eq, key="mod_tot")
@@ -263,10 +302,28 @@ with st.expander("⚙️ Gestione Avanzata Articolo (Modifica / Azzera)"):
                     st.rerun()
                 else:
                     st.error(msg)
+                    
+    with tab_qr:
+        st.write("Genera in tempo reale il QR code per qualsiasi articolo registrato:")
+        articolo_qr = st.selectbox("Seleziona Articolo per QR", lista_eq, key="qr_art")
+        codice_da_codificare = articolo_qr.split(" - ")[0]
+        
+        img_qr = qrcode.make(codice_da_codificare)
+        buf = io.BytesIO()
+        img_qr.save(buf, format="PNG")
+        byte_im = buf.getvalue()
+        
+        st.image(byte_im, width=200, caption=f"QR Code per {articolo_qr}")
+        st.download_button(
+            label="Scarica QR Code in PNG 📥",
+            data=byte_im,
+            file_name=f"QR_{codice_da_codificare}.png",
+            mime="image/png"
+        )
 
 st.divider()
 
-# --- STORICO MOVIMENTI E FILTRI AVANZATI (Articolo + Soggetto: Dipendente o Magazzino) ---
+# --- STORICO MOVIMENTI E FILTRI AVANZATI ---
 col_storico_titolo, col_storico_btn = st.columns([3, 1])
 with col_storico_titolo:
     st.subheader("📜 Storico Movimenti e Filtri")
@@ -286,7 +343,6 @@ col_f1, col_f2 = st.columns(2)
 with col_f1:
     filtro_storico_articolo = st.selectbox("Filtra storico per Articolo:", ["Tutti"] + lista_eq, key="fil_art")
 with col_f2:
-    # Aggiungiamo l'opzione "Magazzino / Sistema" oltre ai dipendenti
     opzioni_soggetto = ["Tutti", "Magazzino / Sistema"] + lista_dip
     filtro_storico_soggetto = st.selectbox("Filtra storico per Soggetto (Dipendente o Magazzino):", opzioni_soggetto, key="fil_sogg")
 

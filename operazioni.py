@@ -75,6 +75,63 @@ def inserisci_articolo_iniziale(codice, descrizione, quantita_totale=10):
     conn.close()
 
 
+def aggiungi_nuovo_articolo_anagrafica(codice, descrizione, quantita_iniziale):
+    """Aggiunge un nuovo articolo nell'anagrafica con relativo stock iniziale."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice,))
+    res = cursor.fetchone()
+    if res:
+        conn.close()
+        return False, f"Errore: Esiste già un articolo con il codice {codice}!"
+
+    try:
+        cursor.execute('INSERT INTO attrezzature (codice_identificativo, descrizione) VALUES (?, ?)', (codice, descrizione))
+        id_attrezzatura = cursor.lastrowid
+        
+        cursor.execute('''
+            INSERT INTO giacenze (id_attrezzatura, totale, disponibili, assegnate, danneggiate, smarrite)
+            VALUES (?, ?, ?, 0, 0, 0)
+        ''', (id_attrezzatura, quantita_iniziale, quantita_iniziale))
+
+        data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute('''
+            INSERT INTO movimenti (id_attrezzatura, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+            VALUES (?, 'Nuovo Articolo', ?, 'Magazzino', ?)
+        ''', (id_attrezzatura, quantita_iniziale, data_ora))
+
+        conn.commit()
+        conn.close()
+        return True, f"Articolo {codice} aggiunto con successo!"
+    except Exception as e:
+        conn.close()
+        return False, f"Errore durante l'inserimento: {e}"
+
+
+def elimina_articolo_definitivo(codice_identificativo):
+    """Elimina completamente un articolo, le sue giacenze e lo storico collegato."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    res = cursor.fetchone()
+    if not res:
+        conn.close()
+        return False, "Articolo non trovato."
+
+    id_attrezzatura = res[0]
+
+    # Elimina movimenti, giacenze e articolo per evitare problemi di chiavi esterne
+    cursor.execute('DELETE FROM movimenti WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    cursor.execute('DELETE FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    cursor.execute('DELETE FROM attrezzature WHERE id = ?', (id_attrezzatura,))
+
+    conn.commit()
+    conn.close()
+    return True, f"Articolo {codice_identificativo} rimosso definitivamente dall'inventario."
+
+
 def modifica_quantita_totale(codice_identificativo, nuovo_totale):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
