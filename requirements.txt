@@ -1,4 +1,5 @@
 streamlit
 pandas
-pyzbar
 Pillow
+pyzbar
+qrcode
