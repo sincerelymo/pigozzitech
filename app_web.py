@@ -11,33 +11,47 @@ from operazioni import (
     segnala_danneggiata_o_persa
 )
 
-# Inizializza il database se è la prima volta o serve il reset
-inizializza_db_azzzerato()
-
-# Esempio di popolamento rapido se il DB è vuoto (puoi personalizzare)
-conn_init = sqlite3.connect('pigozzi_tech.db')
-c_init = conn_init.cursor()
-c_init.execute("SELECT COUNT(*) FROM attrezzature")
-if c_init.fetchone()[0] == 0:
-    inserisci_articolo_iniziale("TRAP-01", "Trapano a Percussione", 10)
-    inserisci_articolo_iniziale("SMER-02", "Smerigliatrice Angolare", 8)
-    inserisci_articolo_iniziale("SALD-03", "Saldatrice Inverter", 4)
-    # Inserisci un dipendente di test se vuoto
-    c_init.execute("SELECT COUNT(*) FROM dipendenti")
-    if c_init.fetchone()[0] == 0:
-        c_init.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Mario', 'Rossi')")
-        c_init.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Luigi', 'Verdi')")
-    conn_init.commit()
-conn_init.close()
-
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
 st.title("🛠️ Pigozzi Tech S.R.L. - Gestione Attrezzature")
 
-# Funzioni di recupero dati per la dashboard
-def ottieni_metriche_globali():
+# Controlla se il database esiste già, altrimenti lo inizializza da zero
+try:
+    conn_chk = sqlite3.connect('pigozzi_tech.db')
+    c_chk = conn_chk.cursor()
+    c_chk.execute("SELECT COUNT(*) FROM attrezzature")
+    esiste = c_chk.fetchone()[0]
+    conn_chk.close()
+except:
+    esiste = 0
+
+if esiste == 0:
+    inizializza_db_azzzerato()
+    # Popolamento iniziale di test
+    inserisci_articolo_iniziale("TRAP-01", "Trapano a Percussione", 10)
+    inserisci_articolo_iniziale("SMER-02", "Smerigliatrice Angolare", 8)
+    inserisci_articolo_iniziale("SALD-03", "Saldatrice Inverter", 4)
+    
+    conn_dip = sqlite3.connect('pigozzi_tech.db')
+    c_dip = conn_dip.cursor()
+    c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Mario', 'Rossi')")
+    c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Luigi', 'Verdi')")
+    conn_dip.commit()
+    conn_dip.close()
+
+# Funzioni di recupero dati
+def ottieni_metriche(codice_articolo=None):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT SUM(totale), SUM(disponibili), SUM(assegnate), SUM(danneggiate), SUM(smarrite) FROM giacenze')
+    if codice_articolo and codice_articolo != "Tutti":
+        cursor.execute('''
+            SELECT g.totale, g.disponibili, g.assegnate, g.danneggiate, g.smarrite 
+            FROM giacenze g 
+            JOIN attrezzature a ON g.id_attrezzatura = a.id 
+            WHERE a.codice_identificativo = ?
+        ''', (codice_articolo,))
+    else:
+        cursor.execute('SELECT SUM(totale), SUM(disponibili), SUM(assegnate), SUM(danneggiate), SUM(smarrite) FROM giacenze')
+    
     res = cursor.fetchone()
     conn.close()
     return [r if r is not None else 0 for r in res]
@@ -56,7 +70,7 @@ def ottieni_storico_per_articolo(codice_articolo=None):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
     query = '''
-        SELECT m.id, a.codice_identificativo || ' - ' as art, COALESCE(d.nome || ' ' || d.cognome, 'Magazzino/Sistema'), 
+        SELECT m.id, a.codice_identificativo || ' - ' || a.descrizione, COALESCE(d.nome || ' ' || d.cognome, 'Magazzino/Sistema'), 
                m.tipo_operazione, m.quantita, m.cantiere_destinazione, m.data_ora
         FROM movimenti m
         JOIN attrezzature a ON m.id_attrezzatura = a.id
@@ -74,23 +88,11 @@ def ottieni_storico_per_articolo(codice_articolo=None):
     conn.close()
     return righe
 
-# --- DASHBOARD METRICS ---
-tot, disp, ass, dann, smar = ottieni_metriche_globali()
-
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Totale", tot)
-col2.metric("Disponibili", disp)
-col3.metric("Assegnate", ass)
-col4.metric("Danneggiate", dann)
-col5.metric("Smarrite", smar)
-
-st.divider()
-
 attrezzature, dipendenti = ottieni_liste_db()
 lista_eq = [f"{eq[0]} - {eq[1]}" for eq in attrezzature]
 lista_dip = [f"{d[0]} - {d[1]} {d[2]}" for d in dipendenti]
 
-# --- SEZIONE OPERAZIONI & WEBCAM ---
+# --- SEZIONE WEBCAM & SELEZIONE ARTICOLO ---
 col_web, col_op = st.columns([1, 1])
 
 with col_web:
@@ -178,15 +180,27 @@ with col_op:
 
 st.divider()
 
-# --- SEZIONE STORICO E FILTRO PER ARTICOLO ---
-st.subheader("📜 Storico Movimenti e Filtro per Articolo")
-
-scelta_filtro_articolo = st.selectbox("Fleziona articolo per vedere il suo storico dedicato:", ["Tutti"] + lista_eq)
+# --- DASHBOARD DINAMICA IN BASE AL FILTRO ARTICOLO ---
+st.subheader("📊 Stato Magazzino & Giacenze")
+scelta_filtro_articolo = st.selectbox("Filtra metriche e storico per articolo:", ["Tutti"] + lista_eq)
 
 codice_filtro = None
 if scelta_filtro_articolo != "Tutti":
     codice_filtro = scelta_filtro_articolo.split(" - ")[0]
 
+tot, disp, ass, dann, smar = ottieni_metriche(codice_filtro)
+
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Totale", tot)
+col2.metric("Disponibili", disp)
+col3.metric("Assegnate", ass)
+col4.metric("Danneggiate", dann)
+col5.metric("Smarrite", smar)
+
+st.divider()
+
+# --- STORICO MOVIMENTI ---
+st.subheader("📜 Storico Movimenti")
 storico_dati = ottieni_storico_per_articolo(codice_filtro)
 
 if storico_dati:
