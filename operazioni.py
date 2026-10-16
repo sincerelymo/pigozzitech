@@ -1,12 +1,11 @@
 import sqlite3
 from datetime import datetime
 
-def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere):
-    """Assegna un'attrezzatura a un dipendente registrando il movimento."""
+def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantita=1):
+    """Assegna o consegna una quantità di attrezzatura a un dipendente."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
-    # 1. Verifica lo stato attuale dell'attrezzatura
     cursor.execute('SELECT id, stato FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
     risultato = cursor.fetchone()
 
@@ -17,19 +16,14 @@ def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere):
 
     id_attrezzatura, stato_attuale = risultato
 
-    if stato_attuale != 'Disponibile':
-        print(f"❌ Attenzione: L'attrezzatura {codice_identificativo} non è disponibile (Stato attuale: {stato_attuale}).")
-        conn.close()
-        return False
-
-    # 2. Registra il movimento di consegna
+    # Registra il movimento di consegna con la quantità scelta
     data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute('''
         INSERT INTO movimenti (id_attrezzatura, id_dipendente, tipo_operazione, cantiere_destinazione, data_ora)
-        VALUES (?, ?, 'Consegna', ?, ?)
-    ''', (id_attrezzatura, id_dipendente, cantiere, data_ora))
+        VALUES (?, ?, ?, ?, ?)
+    ''', (id_attrezzatura, id_dipendente, f"Consegna (Q.tà: {quantita})", cantiere, data_ora))
 
-    # 3. Aggiorna lo stato e l'ubicazione dell'attrezzatura
+    # Aggiorna lo stato a Assegnata indipendentemente dallo stato precedente per evitare blocchi
     cursor.execute('''
         UPDATE attrezzature 
         SET stato = 'Assegnata', ubicazione = ? 
@@ -38,16 +32,15 @@ def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere):
 
     conn.commit()
     conn.close()
-    print(f"✅ Successo: Attrezzatura {codice_identificativo} consegnata al dipendente ID {id_dipendente} presso {cantiere}.")
     return True
 
 
-def restituisci_attrezzatura(codice_identificativo):
-    """Registra la restituzione di un'attrezzatura in magazzino."""
+def restituisci_attrezzatura(codice_identificativo, quantita=1):
+    """Registra la restituzione di una quantità di attrezzatura in magazzino."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT id, stato FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
     risultato = cursor.fetchone()
 
     if not risultato:
@@ -55,22 +48,16 @@ def restituisci_attrezzatura(codice_identificativo):
         conn.close()
         return False
 
-    id_attrezzatura, stato_attuale = risultato
-
-    if stato_attuale != 'Assegnata':
-        print(f"❌ Attenzione: L'attrezzatura {codice_identificativo} non risulta attualmente assegnata.")
-        conn.close()
-        return False
-
+    id_attrezzatura = risultato[0]
     data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Registra il movimento di restituzione
     cursor.execute('''
         INSERT INTO movimenti (id_attrezzatura, tipo_operazione, cantiere_destinazione, data_ora)
-        VALUES (?, 'Restituzione', 'Magazzino', ?)
-    ''', (id_attrezzatura, data_ora))
+        VALUES (?, ?, 'Magazzino', ?)
+    ''', (id_attrezzatura, f"Restituzione (Q.tà: {quantita})", data_ora))
 
-    # Aggiorna lo stato e l'ubicazione
+    # Riporta l'attrezzatura come disponibile in magazzino
     cursor.execute('''
         UPDATE attrezzature 
         SET stato = 'Disponibile', ubicazione = 'Magazzino' 
@@ -79,14 +66,32 @@ def restituisci_attrezzatura(codice_identificativo):
 
     conn.commit()
     conn.close()
-    print(f"✅ Successo: Attrezzatura {codice_identificativo} restituita in Magazzino e resa disponibile.")
     return True
 
 
-if __name__ == '__main__':
-    # Test rapido delle funzioni
-    print("Test operazione di consegna...")
-    assegna_attrezzatura("EQ-001", 1, "Cantiere Nord")
-    
-    print("\nTest operazione di restituzione...")
-    restituisci_attrezzatura("EQ-001")
+def segnala_danneggiata_db(codice_identificativo, quantita=1):
+    """Segnala l'attrezzatura come danneggiata."""
+    try:
+        conn = sqlite3.connect('pigozzi_tech.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+        risultato = cursor.fetchone()
+        if not risultato:
+            conn.close()
+            return False
+            
+        id_attrezzatura = risultato[0]
+        data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute('''
+            INSERT INTO movimenti (id_attrezzatura, tipo_operazione, cantiere_destinazione, data_ora)
+            VALUES (?, ?, 'Magazzino/Riparazione', ?)
+        ''', (id_attrezzatura, f"Danneggiata (Q.tà: {quantita})", data_ora))
+
+        cursor.execute("UPDATE attrezzature SET stato = 'Danneggiata' WHERE id = ?", (id_attrezzatura,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        return False

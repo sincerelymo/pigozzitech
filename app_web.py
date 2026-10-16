@@ -3,7 +3,8 @@ import sqlite3
 import pandas as pd
 from PIL import Image
 from pyzbar.pyzbar import decode
-from operazioni import assegna_attrezzatura, restituisci_attrezzatura
+from operazioni import assegna_attrezzatura, restituisci_attrezzatura, segnala_danneggiata_db
+
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
 
 st.title("🛠️ Pigozzi Tech S.R.L. - Gestione Attrezzature")
@@ -41,24 +42,12 @@ def ottieni_storico_movimenti():
     cursor.execute('''
         SELECT m.id, m.id_attrezzatura, d.nome || ' ' || d.cognome, m.tipo_operazione, m.cantiere_destinazione, m.data_ora
         FROM movimenti m
-        JOIN dipendenti d ON m.id_dipendente = d.id
+        LEFT JOIN dipendenti d ON m.id_dipendente = d.id
         ORDER BY m.id DESC
     ''')
     righe = cursor.fetchall()
     conn.close()
     return righe
-
-# Funzione per marcare l'attrezzatura come danneggiata (fallback se non presente nel modulo esterno)
-def segnala_danneggiata_db(codice_eq):
-    try:
-        conn = sqlite3.connect('pigozzi_tech.db')
-        cursor = conn.cursor()
-        cursor.execute("UPDATE attrezzature SET stato = 'Danneggiata' WHERE codice_identificativo = ?", (codice_eq,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        return False
 
 # --- DASHBOARD METRICS ---
 tot, disp, ass, dann, smar = ottieni_statistiche()
@@ -100,9 +89,8 @@ with col_web:
             st.error(f"Errore nella decodifica: {e}")
 
 with col_op:
-    st.subheader("📦 Registrazione Movimento")
+    st.subheader("📦 Registrazione Movimento & Quantità")
     
-    # Seleziona automaticamente l'indice se è arrivato un codice dalla webcam
     indice_preozionato = 0
     if codice_scansionato:
         for idx, item in enumerate(lista_eq):
@@ -113,9 +101,12 @@ with col_op:
     with st.form("form_movimenti"):
         sel_attrezzatura = st.selectbox("Seleziona Attrezzatura", lista_eq, index=indice_preozionato)
         sel_dipendente = st.selectbox("Seleziona Dipendente", lista_dip)
+        
+        # Aggiunta selezione quantità (scelta casuale / personalizzabile dall'utente)
+        quantita = st.number_input("Quantità", min_value=1, max_value=100, value=1, step=1)
+        
         cantiere = st.text_input("Cantiere / Ubicazione di destinazione")
         
-        # Tre pulsanti affiancati nel form
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
             submitted_consegna = st.form_submit_button("Consegna 🚀", use_container_width=True)
@@ -130,27 +121,27 @@ with col_op:
             else:
                 codice_eq = sel_attrezzatura.split(" - ")[0]
                 id_dip = int(sel_dipendente.split(" - ")[0])
-                successo = assegna_attrezzatura(codice_eq, id_dip, cantiere)
+                successo = assegna_attrezzatura(codice_eq, id_dip, cantiere, quantita)
                 if successo:
-                    st.success(f"Attrezzatura {codice_eq} consegnata con successo!")
+                    st.success(f"Registrate n. {quantita} unità di {codice_eq} consegnate con successo!")
                     st.rerun()
                 else:
-                    st.error("Errore durante la consegna. Controlla lo stato dell'attrezzatura.")
+                    st.error("Errore durante la consegna.")
 
         if submitted_restituzione:
             codice_eq = sel_attrezzatura.split(" - ")[0]
-            successo = restituisci_attrezzatura(codice_eq)
+            successo = restituisci_attrezzatura(codice_eq, quantita)
             if successo:
-                st.success(f"Attrezzatura {codice_eq} restituita in magazzino!")
+                st.success(f"Registrate n. {quantita} unità di {codice_eq} restituite in magazzino!")
                 st.rerun()
             else:
                 st.error("Errore durante la restituzione.")
 
         if submitted_danneggiata:
             codice_eq = sel_attrezzatura.split(" - ")[0]
-            successo = segnala_danneggiata_db(codice_eq)
+            successo = segnala_danneggiata_db(codice_eq, quantita)
             if successo:
-                st.warning(f"Attrezzatura {codice_eq} segnalata come DANNEGGIATA.")
+                st.warning(f"Segnalate n. {quantita} unità di {codice_eq} come DANNEGGIATE.")
                 st.rerun()
             else:
                 st.error("Errore durante la segnalazione del danno.")
