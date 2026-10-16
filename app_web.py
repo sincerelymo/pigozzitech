@@ -26,15 +26,40 @@ except:
 
 if esiste == 0:
     inizializza_db_azzzerato()
-    # Popolamento iniziale di test
-    inserisci_articolo_iniziale("TRAP-01", "Trapano a Percussione", 10)
-    inserisci_articolo_iniziale("SMER-02", "Smerigliatrice Angolare", 8)
-    inserisci_articolo_iniziale("SALD-03", "Saldatrice Inverter", 4)
     
+    # Popolamento con i 20 articoli da EQ-001 a EQ-020
+    articoli_iniziali = [
+        ("EQ-001", "Trapano a Percussione", 10),
+        ("EQ-002", "Smerigliatrice Angolare", 8),
+        ("EQ-003", "Saldatrice Inverter", 4),
+        ("EQ-004", "Martello Demolitore", 5),
+        ("EQ-005", "Avvitatore a Impulsi", 12),
+        ("EQ-006", "Seghetto Alternativo", 6),
+        ("EQ-007", "Laser di Livellamento", 3),
+        ("EQ-008", "Troncatrice per Metalli", 4),
+        ("EQ-009", "Pistola Termica", 10),
+        ("EQ-010", "Flessibile Grande", 7),
+        ("EQ-011", "Generatore di Corrente", 2),
+        ("EQ-012", "Idropulitrice Alta Pressione", 5),
+        ("EQ-013", "Murocotto / Miscelatore", 4),
+        ("EQ-014", "Trabattello in Alluminio", 3),
+        ("EQ-015", "Scala Telescopica", 8),
+        ("EQ-016", "Faro LED Cantiere", 15),
+        ("EQ-017", "Cavo Prolunga 50m", 20),
+        ("EQ-018", "Compressore d'Aria 50L", 3),
+        ("EQ-019", "Braccio Gru / Paranco", 2),
+        ("EQ-020", "Kit DPI Completi", 25)
+    ]
+
+    for codice, desc, qta in articoli_iniziali:
+        inserisci_articolo_iniziale(codice, desc, qta)
+    
+    # Dipendenti di test
     conn_dip = sqlite3.connect('pigozzi_tech.db')
     c_dip = conn_dip.cursor()
     c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Mario', 'Rossi')")
     c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Luigi', 'Verdi')")
+    c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Giovanni', 'Bianchi')")
     conn_dip.commit()
     conn_dip.close()
 
