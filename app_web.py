@@ -9,7 +9,8 @@ from operazioni import (
     assegna_attrezzatura, 
     restituisci_attrezzatura, 
     segnala_danneggiata_o_persa,
-    modifica_quantita_totale
+    modifica_quantita_totale,
+    azzera_storico_movimenti
 )
 
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
@@ -238,8 +239,23 @@ with st.expander("⚙️ Modifica Quantità Totale di un Articolo"):
 
 st.divider()
 
-# --- STORICO MOVIMENTI ---
-st.subheader("📜 Storico Movimenti")
+# --- STORICO MOVIMENTI E PULSANTE DI AZZERAMENTO ---
+col_storico_titolo, col_storico_btn = st.columns([3, 1])
+with col_storico_titolo:
+    st.subheader("📜 Storico Movimenti")
+
+with col_storico_btn:
+    # Aggiungiamo un piccolo form o pulsante con conferma per azzerare lo storico
+    with st.popover("🗑️ Azzera Storico"):
+        st.write("Sei sicuro di voler cancellare tutto lo storico dei movimenti registrati?")
+        if st.button("Conferma Azzeramento", type="primary"):
+            ok, msg = azzera_storico_movimenti()
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
 storico_dati = ottieni_storico_per_articolo(codice_filtro)
 
 if storico_dati:

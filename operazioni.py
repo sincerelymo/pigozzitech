@@ -96,8 +96,6 @@ def modifica_quantita_totale(codice_identificativo, nuovo_totale):
         return False, "Giacenza non trovata."
 
     vecchio_totale, disponibili, assegnate = g
-
-    # Calcoliamo la differenza per aggiornare i pezzi disponibili senza toccare quelli già assegnati
     differenza = nuovo_totale - vecchio_totale
     nuovo_disponibili = disponibili + differenza
 
@@ -120,6 +118,19 @@ def modifica_quantita_totale(codice_identificativo, nuovo_totale):
     conn.commit()
     conn.close()
     return True, f"Quantità totale aggiornata a {nuovo_totale} con successo!"
+
+
+def azzera_storico_movimenti():
+    """Cancella tutti i record dalla tabella movimenti."""
+    try:
+        conn = sqlite3.connect('pigozzi_tech.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM movimenti')
+        conn.commit()
+        conn.close()
+        return True, "Storico dei movimenti azzerato con successo!"
+    except Exception as e:
+        return False, f"Errore durante l'azzeramento dello storico: {e}"
 
 
 def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantita):
