@@ -6,13 +6,11 @@ def inizializza_db_azzzerato():
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
-    # Elimina le tabelle vecchie per un reset totale pulito
     cursor.execute('DROP TABLE IF EXISTS movimenti')
     cursor.execute('DROP TABLE IF EXISTS giacenze')
     cursor.execute('DROP TABLE IF EXISTS attrezzature')
     cursor.execute('DROP TABLE IF EXISTS dipendenti')
 
-    # Tabella Attrezzature/Articoli
     cursor.execute('''
         CREATE TABLE attrezzature (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +19,6 @@ def inizializza_db_azzzerato():
         )
     ''')
 
-    # Tabella Giacenze per ogni articolo
     cursor.execute('''
         CREATE TABLE giacenze (
             id_attrezzatura INTEGER PRIMARY KEY,
@@ -34,7 +31,6 @@ def inizializza_db_azzzerato():
         )
     ''')
 
-    # Tabella Dipendenti
     cursor.execute('''
         CREATE TABLE dipendenti (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +39,6 @@ def inizializza_db_azzzerato():
         )
     ''')
 
-    # Tabella Movimenti
     cursor.execute('''
         CREATE TABLE movimenti (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,8 +77,52 @@ def inserisci_articolo_iniziale(codice, descrizione, quantita_totale=10):
     conn.close()
 
 
+def modifica_quantita_totale(codice_identificativo, nuovo_totale):
+    """Modifica la quantità totale di un articolo e adegua i disponibili di conseguenza."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    res = cursor.fetchone()
+    if not res:
+        conn.close()
+        return False, "Articolo non trovato."
+    
+    id_attrezzatura = res[0]
+    cursor.execute('SELECT totale, disponibili, assegnate FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    g = cursor.fetchone()
+    if not g:
+        conn.close()
+        return False, "Giacenza non trovata."
+
+    vecchio_totale, disponibili, assegnate = g
+
+    # Calcoliamo la differenza per aggiornare i pezzi disponibili senza toccare quelli già assegnati
+    differenza = nuovo_totale - vecchio_totale
+    nuovo_disponibili = disponibili + differenza
+
+    if nuovo_disponibili < 0:
+        conn.close()
+        return False, f"Impossibile impostare questo totale: risulterebbero disponibili quantità negative (Assegnati attuali: {assegnate})."
+
+    cursor.execute('''
+        UPDATE giacenze 
+        SET totale = ?, disponibili = ?
+        WHERE id_attrezzatura = ?
+    ''', (nuovo_totale, nuovo_disponibili, id_attrezzatura))
+
+    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''
+        INSERT INTO movimenti (id_attrezzatura, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+        VALUES (?, 'Modifica Totale', ?, 'Magazzino (Inventario)', ?)
+    ''', (id_attrezzatura, nuovo_totale, data_ora))
+
+    conn.commit()
+    conn.close()
+    return True, f"Quantità totale aggiornata a {nuovo_totale} con successo!"
+
+
 def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantita):
-    """Consegna attrezzatura verificando la disponibilità."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
@@ -124,7 +163,6 @@ def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantit
 
 
 def restituisci_attrezzatura(codice_identificativo, quantita):
-    """Restituisce attrezzatura verificando che non si restituisca più del consegnato."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
@@ -160,7 +198,6 @@ def restituisci_attrezzatura(codice_identificativo, quantita):
 
 
 def segnala_danneggiata_o_persa(codice_identificativo, quantita, tipo="Danneggiata"):
-    """Segnala merce come Danneggiata o Smarrita."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 

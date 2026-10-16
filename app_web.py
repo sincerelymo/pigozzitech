@@ -8,13 +8,14 @@ from operazioni import (
     inserisci_articolo_iniziale, 
     assegna_attrezzatura, 
     restituisci_attrezzatura, 
-    segnala_danneggiata_o_persa
+    segnala_danneggiata_o_persa,
+    modifica_quantita_totale
 )
 
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
 st.title("🛠️ Pigozzi Tech S.R.L. - Gestione Attrezzature")
 
-# Controlla se il database esiste già, altrimenti lo inizializza da zero
+# Controllo esistenza database e popolamento 20 articoli
 try:
     conn_chk = sqlite3.connect('pigozzi_tech.db')
     c_chk = conn_chk.cursor()
@@ -27,7 +28,6 @@ except:
 if esiste == 0:
     inizializza_db_azzzerato()
     
-    # Popolamento con i 20 articoli da EQ-001 a EQ-020
     articoli_iniziali = [
         ("EQ-001", "Trapano a Percussione", 10),
         ("EQ-002", "Smerigliatrice Angolare", 8),
@@ -54,7 +54,6 @@ if esiste == 0:
     for codice, desc, qta in articoli_iniziali:
         inserisci_articolo_iniziale(codice, desc, qta)
     
-    # Dipendenti di test
     conn_dip = sqlite3.connect('pigozzi_tech.db')
     c_dip = conn_dip.cursor()
     c_dip.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Mario', 'Rossi')")
@@ -63,7 +62,6 @@ if esiste == 0:
     conn_dip.commit()
     conn_dip.close()
 
-# Funzioni di recupero dati
 def ottieni_metriche(codice_articolo=None):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
@@ -221,6 +219,22 @@ col2.metric("Disponibili", disp)
 col3.metric("Assegnate", ass)
 col4.metric("Danneggiate", dann)
 col5.metric("Smarrite", smar)
+
+# --- OPZIONE PER MODIFICARE LA QUANTITÀ TOTALE DELL'ARTICOLO ---
+with st.expander("⚙️ Modifica Quantità Totale di un Articolo"):
+    with st.form("form_modifica_totale"):
+        articolo_da_modificare = st.selectbox("Seleziona Articolo da Aggiornare", lista_eq, key="mod_tot")
+        nuovo_valore_totale = st.number_input("Nuova Quantità Totale Reale", min_value=1, max_value=500, value=10, step=1)
+        btn_aggiorna_totale = st.form_submit_button("Aggiorna Totale Magazzino 🔄")
+
+        if btn_aggiorna_totale:
+            codice_mod = articolo_da_modificare.split(" - ")[0]
+            ok, msg = modifica_quantita_totale(codice_mod, nuovo_valore_totale)
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
 
 st.divider()
 
