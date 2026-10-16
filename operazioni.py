@@ -1,97 +1,208 @@
 import sqlite3
 from datetime import datetime
 
-def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantita=1):
-    """Assegna o consegna una quantità di attrezzatura a un dipendente."""
+def inizializza_db_azzzerato():
+    """Crea o resetta il database con tabelle per quantità e tracciamento rigoroso."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT id, stato FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
-    risultato = cursor.fetchone()
-
-    if not risultato:
-        print(f"❌ Errore: Attrezzatura con codice {codice_identificativo} non trovata.")
-        conn.close()
-        return False
-
-    id_attrezzatura, stato_attuale = risultato
-
-    # Registra il movimento di consegna con la quantità scelta
-    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Tabella Attrezzature/Articoli di base
     cursor.execute('''
-        INSERT INTO movimenti (id_attrezzatura, id_dipendente, tipo_operazione, cantiere_destinazione, data_ora)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (id_attrezzatura, id_dipendente, f"Consegna (Q.tà: {quantita})", cantiere, data_ora))
+        CREATE TABLE IF NOT EXISTS attrezzature (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codice_identificativo TEXT UNIQUE,
+            descrizione TEXT
+        )
+    ''')
 
-    # Aggiorna lo stato a Assegnata indipendentemente dallo stato precedente per evitare blocchi
+    # Tabella per la gestione delle quantità in tempo reale per ogni articolo
     cursor.execute('''
-        UPDATE attrezzature 
-        SET stato = 'Assegnata', ubicazione = ? 
-        WHERE id = ?
-    ''', (cantiere, id_attrezzatura))
+        CREATE TABLE IF NOT EXISTS giacenze (
+            id_attrezzatura INTEGER PRIMARY KEY,
+            totale INTEGER DEFAULT 0,
+            disponibili INTEGER DEFAULT 0,
+            assegnate INTEGER DEFAULT 0,
+            danneggiate INTEGER DEFAULT 0,
+            smarrite INTEGER DEFAULT 0,
+            FOREIGN KEY (id_attrezzatura) REFERENCES attrezzature(id)
+        )
+    ''')
+
+    # Tabella Dipendenti
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS dipendenti (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT,
+            cognome TEXT
+        )
+    ''')
+
+    # Tabella Movimenti
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS movimenti (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_attrezzatura INTEGER,
+            id_dipendente INTEGER,
+            tipo_operazione TEXT,
+            quantita INTEGER,
+            cantiere_destinazione TEXT,
+            data_ora TEXT,
+            FOREIGN KEY (id_attrezzatura) REFERENCES attrezzature(id),
+            FOREIGN KEY (id_dipendente) REFERENCES dipendenti(id)
+        )
+    ''')
 
     conn.commit()
     conn.close()
-    return True
 
 
-def restituisci_attrezzatura(codice_identificativo, quantita=1):
-    """Registra la restituzione di una quantità di attrezzatura in magazzino."""
+def inserisci_articolo_iniziale(codice, descrizione, quantita_totale=10):
+    """Aggiunge o resetta un articolo con una quantità iniziale definita."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice,))
+    res = cursor.fetchone()
+
+    if not res:
+        cursor.execute('INSERT INTO attrezzature (codice_identificativo, descrizione) VALUES (?, ?)', (codice, descrizione))
+        id_attrezzatura = cursor.lastrowid
+        # Inizializziamo con tutto disponibile
+        cursor.execute('''
+            INSERT INTO giacenze (id_attrezzatura, totale, disponibili, assegnate, danneggiate, smarrite)
+            VALUES (?, ?, ?, 0, 0, 0)
+        ''', (id_attrezzatura, quantita_totale, quantita_totale))
+    else:
+        id_attrezzatura = res[0]
+        # Aggiorna reset quantitativi
+        cursor.execute('''
+            UPDATE giacenze SET totale = ?, disponibili = ?, assegnate = 0, danneggiate = 0, smarrite = 0
+            WHERE id_attrezzatura = ?
+        ''', (quantita_totale, quantita_totale, id_attrezzatura))
+
+    conn.commit()
+    conn.close()
+
+
+def assegna_attrezzatura(codice_identificativo, id_dipendente, cantiere, quantita):
+    """Consegna attrezzatura verificando che ci siano abbastanza pezzi disponibili."""
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
 
     cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
-    risultato = cursor.fetchone()
-
-    if not risultato:
-        print(f"❌ Errore: Attrezzatura con codice {codice_identificativo} non trovata.")
+    res = cursor.fetchone()
+    if not res:
         conn.close()
-        return False
+        return False, "Articolo non trovato."
+    id_attrezzatura = res[0]
 
-    id_attrezzatura = risultato[0]
-    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('SELECT disponibili, totale FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    g = cursor.fetchone()
+    if not g:
+        conn.close()
+        return False, "Giacenza non configurata per questo articolo."
+
+    disponibili, totale = g
+
+    if quantita > disponibili:
+        conn.close()
+        return False, f"Quantità non disponibile! Disponibili in magazzino: {disponibili}."
+
+    # Aggiorna giacenze
+    new_disp = disponibili - quantita
+    new_ass = (totale - new_disp) - (g[2] - disponibili) # ricalcolo corretto assegnate
+    # Semplificazione calcolo assegnate:
+    cursor.execute('SELECT assegnate FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    vecchie_assegnate = cursor.fetchone()[0]
     
-    # Registra il movimento di restituzione
     cursor.execute('''
-        INSERT INTO movimenti (id_attrezzatura, tipo_operazione, cantiere_destinazione, data_ora)
-        VALUES (?, ?, 'Magazzino', ?)
-    ''', (id_attrezzatura, f"Restituzione (Q.tà: {quantita})", data_ora))
+        UPDATE giacenze 
+        SET disponibili = disponibili - ?, assegnate = assegnate + ?
+        WHERE id_attrezzatura = ?
+    ''', (quantita, quantita, id_attrezzatura))
 
-    # Riporta l'attrezzatura come disponibile in magazzino
+    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute('''
-        UPDATE attrezzature 
-        SET stato = 'Disponibile', ubicazione = 'Magazzino' 
-        WHERE id = ?
-    ''', (id_attrezzatura,))
+        INSERT INTO movimenti (id_attrezzatura, id_dipendente, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+        VALUES (?, ?, 'Consegna', ?, ?, ?)
+    ''', (id_attrezzatura, id_dipendente, quantita, cantiere, data_ora))
 
     conn.commit()
     conn.close()
-    return True
+    return True, "Consegna registrata con successo!"
 
 
-def segnala_danneggiata_db(codice_identificativo, quantita=1):
-    """Segnala l'attrezzatura come danneggiata."""
-    try:
-        conn = sqlite3.connect('pigozzi_tech.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
-        risultato = cursor.fetchone()
-        if not risultato:
-            conn.close()
-            return False
-            
-        id_attrezzatura = risultato[0]
-        data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def restituisci_attrezzatura(codice_identificativo, quantita):
+    """Restituisce attrezzatura verificando che non si restituisca più del consegnato."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO movimenti (id_attrezzatura, tipo_operazione, cantiere_destinazione, data_ora)
-            VALUES (?, ?, 'Magazzino/Riparazione', ?)
-        ''', (id_attrezzatura, f"Danneggiata (Q.tà: {quantita})", data_ora))
-
-        cursor.execute("UPDATE attrezzature SET stato = 'Danneggiata' WHERE id = ?", (id_attrezzatura,))
-        conn.commit()
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    res = cursor.fetchone()
+    if not res:
         conn.close()
-        return True
-    except Exception as e:
-        return False
+        return False, "Articolo non trovato."
+    id_attrezzatura = res[0]
+
+    cursor.execute('SELECT assegnate FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    assegnate = cursor.fetchone()[0]
+
+    if quantita > assegnate:
+        conn.close()
+        return False, f"Errore: Stai tentando di restituire {quantita} pezzi, ma risultano assegnati solo {assegnate} pezzi!"
+
+    cursor.execute('''
+        UPDATE giacenze 
+        SET assegnate = assegnate - ?, disponibili = disponibili + ?
+        WHERE id_attrezzatura = ?
+    ''', (quantita, quantita, id_attrezzatura))
+
+    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''
+        INSERT INTO movimenti (id_attrezzatura, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+        VALUES (?, 'Restituzione', ?, 'Magazzino', ?)
+    ''', (id_attrezzatura, quantita, data_ora))
+
+    conn.commit()
+    conn.close()
+    return True, "Restituzione registrata con successo!"
+
+
+def segnala_danneggiata_o_persa(codice_identificativo, quantita, tipo="Danneggiata"):
+    """Segnala merce come Danneggiata o Smarrita scalandola dalle assegnate o disponibili."""
+    conn = sqlite3.connect('pigozzi_tech.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id FROM attrezzature WHERE codice_identificativo = ?', (codice_identificativo,))
+    res = cursor.fetchone()
+    if not res:
+        conn.close()
+        return False, "Articolo non trovato."
+    id_attrezzatura = res[0]
+
+    cursor.execute('SELECT assegnate, disponibili FROM giacenze WHERE id_attrezzatura = ?', (id_attrezzatura,))
+    ass, disp = cursor.fetchone()
+
+    # Per sicurezza verifichiamo che ci siano abbastanza pezzi totali movimentabili
+    if quantita > (ass + disp):
+        conn.close()
+        return False, "Quantità non valida rispetto allo stock attuale."
+
+    colonna_target = 'danneggiate' if tipo == 'Danneggiata' else 'smarrite'
+
+    # Sottraiamo prioritariamente dalle assegnate o disponibili
+    cursor.execute(f'''
+        UPDATE giacenze 
+        SET {colonna_target} = {colonna_target} + ?, totale = totale - ?
+        WHERE id_attrezzatura = ?
+    ''', (quantita, quantita, id_attrezzatura))
+
+    data_ora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''
+        INSERT INTO movimenti (id_attrezzatura, tipo_operazione, quantita, cantiere_destinazione, data_ora)
+        VALUES (?, ?, ?, 'Magazzino/Revisione', ?)
+    ''', (id_attrezzatura, tipo, quantita, data_ora))
+
+    conn.commit()
+    conn.close()
+    return True, f"Segnalato come {tipo} con successo!"

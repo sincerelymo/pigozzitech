@@ -3,28 +3,44 @@ import sqlite3
 import pandas as pd
 from PIL import Image
 from pyzbar.pyzbar import decode
-from operazioni import assegna_attrezzatura, restituisci_attrezzatura, segnala_danneggiata_db
+from operazioni import (
+    inizializza_db_azzzerato, 
+    inserisci_articolo_iniziale, 
+    assegna_attrezzatura, 
+    restituisci_attrezzatura, 
+    segnala_danneggiata_o_persa
+)
+
+# Inizializza il database se è la prima volta o serve il reset
+inizializza_db_azzzerato()
+
+# Esempio di popolamento rapido se il DB è vuoto (puoi personalizzare)
+conn_init = sqlite3.connect('pigozzi_tech.db')
+c_init = conn_init.cursor()
+c_init.execute("SELECT COUNT(*) FROM attrezzature")
+if c_init.fetchone()[0] == 0:
+    inserisci_articolo_iniziale("TRAP-01", "Trapano a Percussione", 10)
+    inserisci_articolo_iniziale("SMER-02", "Smerigliatrice Angolare", 8)
+    inserisci_articolo_iniziale("SALD-03", "Saldatrice Inverter", 4)
+    # Inserisci un dipendente di test se vuoto
+    c_init.execute("SELECT COUNT(*) FROM dipendenti")
+    if c_init.fetchone()[0] == 0:
+        c_init.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Mario', 'Rossi')")
+        c_init.execute("INSERT INTO dipendenti (nome, cognome) VALUES ('Luigi', 'Verdi')")
+    conn_init.commit()
+conn_init.close()
 
 st.set_page_config(page_title="Pigozzi Tech - Gestione Attrezzature", layout="wide")
-
 st.title("🛠️ Pigozzi Tech S.R.L. - Gestione Attrezzature")
 
-# Funzioni database
-def ottieni_statistiche():
+# Funzioni di recupero dati per la dashboard
+def ottieni_metriche_globali():
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM attrezzature')
-    totali = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM attrezzature WHERE stato = 'Disponibile'")
-    disponibili = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM attrezzature WHERE stato = 'Assegnata'")
-    assegnate = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM attrezzature WHERE stato = 'Danneggiata'")
-    danneggiate = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM attrezzature WHERE stato = 'Smarrita'")
-    smarrite = cursor.fetchone()[0]
+    cursor.execute('SELECT SUM(totale), SUM(disponibili), SUM(assegnate), SUM(danneggiate), SUM(smarrite) FROM giacenze')
+    res = cursor.fetchone()
     conn.close()
-    return totali, disponibili, assegnate, danneggiate, smarrite
+    return [r if r is not None else 0 for r in res]
 
 def ottieni_liste_db():
     conn = sqlite3.connect('pigozzi_tech.db')
@@ -36,21 +52,30 @@ def ottieni_liste_db():
     conn.close()
     return attrezzature, dipendenti
 
-def ottieni_storico_movimenti():
+def ottieni_storico_per_articolo(codice_articolo=None):
     conn = sqlite3.connect('pigozzi_tech.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT m.id, m.id_attrezzatura, d.nome || ' ' || d.cognome, m.tipo_operazione, m.cantiere_destinazione, m.data_ora
+    query = '''
+        SELECT m.id, a.codice_identificativo || ' - ' as art, COALESCE(d.nome || ' ' || d.cognome, 'Magazzino/Sistema'), 
+               m.tipo_operazione, m.quantita, m.cantiere_destinazione, m.data_ora
         FROM movimenti m
+        JOIN attrezzature a ON m.id_attrezzatura = a.id
         LEFT JOIN dipendenti d ON m.id_dipendente = d.id
-        ORDER BY m.id DESC
-    ''')
+    '''
+    if codice_articolo and codice_articolo != "Tutti":
+        query += " WHERE a.codice_identificativo = ?"
+        query += " ORDER BY m.id DESC"
+        cursor.execute(query, (codice_articolo,))
+    else:
+        query += " ORDER BY m.id DESC"
+        cursor.execute(query)
+    
     righe = cursor.fetchall()
     conn.close()
     return righe
 
 # --- DASHBOARD METRICS ---
-tot, disp, ass, dann, smar = ottieni_statistiche()
+tot, disp, ass, dann, smar = ottieni_metriche_globali()
 
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Totale", tot)
@@ -61,16 +86,15 @@ col5.metric("Smarrite", smar)
 
 st.divider()
 
-# --- GESTIONE STATO / INDEX PER LA WEBCAM ---
 attrezzature, dipendenti = ottieni_liste_db()
 lista_eq = [f"{eq[0]} - {eq[1]}" for eq in attrezzature]
 lista_dip = [f"{d[0]} - {d[1]} {d[2]}" for d in dipendenti]
 
-# --- SEZIONE WEBCAM & OPERAZIONI ---
+# --- SEZIONE OPERAZIONI & WEBCAM ---
 col_web, col_op = st.columns([1, 1])
 
 with col_web:
-    st.subheader("📷 Scansione QR con Webcam")
+    st.subheader("📷 Scansione QR / Fotocamera")
     camera_file = st.camera_input("Inquadra il QR code")
     
     codice_scansionato = None
@@ -84,12 +108,12 @@ with col_web:
                     codice_scansionato = codice_scansionato[3:].strip()
                 st.success(f"QR Riconosciuto: **{codice_scansionato}**")
             else:
-                st.warning("Nessun QR code rilevato nello scatto.")
+                st.warning("Nessun QR code rilevato.")
         except Exception as e:
-            st.error(f"Errore nella decodifica: {e}")
+            st.error(f"Errore lettura: {e}")
 
 with col_op:
-    st.subheader("📦 Registrazione Movimento & Quantità")
+    st.subheader("📦 Registrazione Movimento")
     
     indice_preozionato = 0
     if codice_scansionato:
@@ -98,62 +122,75 @@ with col_op:
                 indice_preozionato = idx
                 break
 
-    with st.form("form_movimenti"):
-        sel_attrezzatura = st.selectbox("Seleziona Attrezzatura", lista_eq, index=indice_preozionato)
+    with st.form("form_operazioni"):
+        sel_attrezzatura = st.selectbox("Seleziona Articolo", lista_eq, index=indice_preozionato)
         sel_dipendente = st.selectbox("Seleziona Dipendente", lista_dip)
-        
-        # Aggiunta selezione quantità (scelta casuale / personalizzabile dall'utente)
-        quantita = st.number_input("Quantità", min_value=1, max_value=100, value=1, step=1)
-        
-        cantiere = st.text_input("Cantiere / Ubicazione di destinazione")
-        
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        with col_btn1:
-            submitted_consegna = st.form_submit_button("Consegna 🚀", use_container_width=True)
-        with col_btn2:
-            submitted_restituzione = st.form_submit_button("Restituzione 📥", use_container_width=True)
-        with col_btn3:
-            submitted_danneggiata = st.form_submit_button("Danneggiata ⚠️", use_container_width=True)
+        quantita = st.number_input("Quantità", min_value=1, max_value=50, value=1, step=1)
+        cantiere = st.text_input("Cantiere di destinazione")
 
-        if submitted_consegna:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            btn_consegna = st.form_submit_button("Consegna 🚀")
+        with c2:
+            btn_restituzione = st.form_submit_button("Restituisci 📥")
+        with c3:
+            btn_danno = st.form_submit_button("Danneggiato ⚠️")
+        with c4:
+            btn_perso = st.form_submit_button("Smarrito ❌")
+
+        codice_eq = sel_attrezzatura.split(" - ")[0]
+        id_dip = int(sel_dipendente.split(" - ")[0])
+
+        if btn_consegna:
             if not cantiere:
-                st.error("Inserisci il cantiere di destinazione.")
+                st.error("Inserisci il cantiere.")
             else:
-                codice_eq = sel_attrezzatura.split(" - ")[0]
-                id_dip = int(sel_dipendente.split(" - ")[0])
-                successo = assegna_attrezzatura(codice_eq, id_dip, cantiere, quantita)
-                if successo:
-                    st.success(f"Registrate n. {quantita} unità di {codice_eq} consegnate con successo!")
+                ok, msg = assegna_attrezzatura(codice_eq, id_dip, cantiere, quantita)
+                if ok:
+                    st.success(msg)
                     st.rerun()
                 else:
-                    st.error("Errore durante la consegna.")
+                    st.error(msg)
 
-        if submitted_restituzione:
-            codice_eq = sel_attrezzatura.split(" - ")[0]
-            successo = restituisci_attrezzatura(codice_eq, quantita)
-            if successo:
-                st.success(f"Registrate n. {quantita} unità di {codice_eq} restituite in magazzino!")
+        if btn_restituzione:
+            ok, msg = restituisci_attrezzatura(codice_eq, quantita)
+            if ok:
+                st.success(msg)
                 st.rerun()
             else:
-                st.error("Errore durante la restituzione.")
+                st.error(msg)
 
-        if submitted_danneggiata:
-            codice_eq = sel_attrezzatura.split(" - ")[0]
-            successo = segnala_danneggiata_db(codice_eq, quantita)
-            if successo:
-                st.warning(f"Segnalate n. {quantita} unità di {codice_eq} come DANNEGGIATE.")
+        if btn_danno:
+            ok, msg = segnala_danneggiata_o_persa(codice_eq, quantita, "Danneggiata")
+            if ok:
+                st.warning(msg)
                 st.rerun()
             else:
-                st.error("Errore durante la segnalazione del danno.")
+                st.error(msg)
+
+        if btn_perso:
+            ok, msg = segnala_danneggiata_o_persa(codice_eq, quantita, "Smarrita")
+            if ok:
+                st.error(msg)
+                st.rerun()
+            else:
+                st.error(msg)
 
 st.divider()
 
-# --- STORICO MOVIMENTI ---
-st.subheader("📜 Storico Movimenti Completo")
-storico = ottieni_storico_movimenti()
+# --- SEZIONE STORICO E FILTRO PER ARTICOLO ---
+st.subheader("📜 Storico Movimenti e Filtro per Articolo")
 
-if storico:
-    df_storico = pd.DataFrame(storico, columns=["ID", "Attrezzatura", "Dipendente", "Operazione", "Cantiere", "Data/Ora"])
+scelta_filtro_articolo = st.selectbox("Fleziona articolo per vedere il suo storico dedicato:", ["Tutti"] + lista_eq)
+
+codice_filtro = None
+if scelta_filtro_articolo != "Tutti":
+    codice_filtro = scelta_filtro_articolo.split(" - ")[0]
+
+storico_dati = ottieni_storico_per_articolo(codice_filtro)
+
+if storico_dati:
+    df_storico = pd.DataFrame(storico_dati, columns=["ID", "Articolo", "Dipendente", "Operazione", "Quantità", "Cantiere/Stato", "Data/Ora"])
     st.dataframe(df_storico, use_container_width=True)
 else:
-    st.write("Nessun movimento registrato finora.")
+    st.info("Nessun movimento trovato per i criteri selezionati.")
